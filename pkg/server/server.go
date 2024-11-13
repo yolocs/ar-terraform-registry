@@ -4,19 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
+	"github.com/abcxyz/pkg/logging"
 	"github.com/abcxyz/pkg/serving"
+	"github.com/yolocs/ar-terraform-registry/pkg/model"
 )
+
+type Config struct {
+	Port string
+}
 
 type Registry struct {
 	cfg    *Config
 	mux    *http.ServeMux
+	ps     model.ProviderStore
+	ms     model.ModuleStore
 	logger *slog.Logger
 }
 
-func New(cfg *Config, logger *slog.Logger) (*Registry, error) {
+func New(cfg *Config, ps model.ProviderStore, ms model.ModuleStore, logger *slog.Logger) (*Registry, error) {
 	reg := &Registry{
 		cfg:    cfg,
 		mux:    http.NewServeMux(),
@@ -131,32 +140,78 @@ func (reg *Registry) ModuleDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (reg *Registry) ProviderVersions(w http.ResponseWriter, r *http.Request) {
-	response := map[string]interface{}{
-		"versions": []map[string]interface{}{{
-			"version":   "1.0.0",
-			"protocols": []string{"5.0"},
-		}},
-		"namespace": r.PathValue("namespace"),
-		"name":      r.PathValue("name"),
+	var (
+		namespace = r.PathValue("namespace")
+		name      = r.PathValue("name")
+	)
+	ctx := logging.WithLogger(r.Context(), reg.logger)
+
+	vs, err := reg.ps.ListProviderVersions(ctx, namespace, name)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "ListProviderVersions", "error", err)
+		return
 	}
-	json.NewEncoder(w).Encode(response)
+
+	if err := json.NewEncoder(w).Encode(vs); err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "ListProviderVersions", "error", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (reg *Registry) ProviderDownload(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Download provider: %s/%s/%s for %s/%s",
-		r.PathValue("namespace"),
-		r.PathValue("name"),
-		r.PathValue("version"),
-		r.PathValue("os"),
-		r.PathValue("arch"))
+	var (
+		namespace = r.PathValue("namespace")
+		name      = r.PathValue("name")
+		version   = r.PathValue("version")
+		os        = r.PathValue("os")
+		arch      = r.PathValue("arch")
+	)
+	ctx := logging.WithLogger(r.Context(), reg.logger)
+
+	provider, err := reg.ps.GetProviderVersion(ctx, namespace, name, version, os, arch)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "GetProviderVersion", "error", err)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(provider); err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "GetProviderVersion", "error", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (reg *Registry) ProviderAssetDownload(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Download asset %s for provider: %s/%s/%s",
-		r.PathValue("assetName"),
-		r.PathValue("namespace"),
-		r.PathValue("name"),
-		r.PathValue("version"))
+	var (
+		namespace = r.PathValue("namespace")
+		assetName = r.PathValue("assetName")
+	)
+	ctx := logging.WithLogger(r.Context(), reg.logger)
+
+	fr, err := reg.ps.GetProviderAsset(ctx, namespace, assetName)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "GetProviderAsset", "error", err)
+		return
+	}
+	defer fr.Close()
+
+	written, err := io.Copy(w, fr)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		reg.logger.ErrorContext(ctx, "Copy asset", "error", err)
+		return
+	}
+
+	reg.logger.DebugContext(ctx, "ProviderAssetDownload", "written", written)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (reg *Registry) setupRoutes() {
@@ -167,5 +222,5 @@ func (reg *Registry) setupRoutes() {
 	reg.mux.HandleFunc("/v1/modules/{namespace}/{name}/{provider}/{version}/download", reg.ModuleDownload)
 	reg.mux.HandleFunc("/v1/providers/{namespace}/{name}/versions", reg.ProviderVersions)
 	reg.mux.HandleFunc("/v1/providers/{namespace}/{name}/{version}/download/{os}/{arch}", reg.ProviderDownload)
-	reg.mux.HandleFunc("/download/provider/{namespace}/{name}/{version}/asset/{assetName}", reg.ProviderAssetDownload)
+	reg.mux.HandleFunc("/download/provider/{namespace}/asset/{assetName}", reg.ProviderAssetDownload)
 }

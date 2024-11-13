@@ -83,5 +83,5 @@ type ModuleStore interface {
 type ProviderStore interface {
 	ListProviderVersions(ctx context.Context, namespace string, name string) (*ProviderVersions, error)
 	GetProviderVersion(ctx context.Context, namespace string, name string, version string, os string, arch string) (*Provider, error)
-	GetProviderAsset(ctx context.Context, namespace string, name string, tag string, asset string) (io.ReadCloser, error)
+	GetProviderAsset(ctx context.Context, namespace string, fileName string) (io.ReadCloser, error)
 }
