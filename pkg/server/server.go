@@ -160,12 +160,12 @@ func (reg *Registry) ProviderAssetDownload(w http.ResponseWriter, r *http.Reques
 }
 
 func (reg *Registry) setupRoutes() {
-	reg.mux.Handle("GET /", http.HandlerFunc(reg.Index))
-	reg.mux.Handle("GET /health", http.HandlerFunc(reg.Health))
-	reg.mux.Handle("GET /.well-known/{name}", http.HandlerFunc(reg.ServiceDiscovery))
-	reg.mux.Handle("GET /v1/modules/{namespace}/{name}/{provider}/versions", http.HandlerFunc(reg.ModuleVersions))
-	reg.mux.Handle("GET /v1/modules/{namespace}/{name}/{provider}/{version}/download", http.HandlerFunc(reg.ModuleDownload))
-	reg.mux.Handle("GET /v1/providers/{namespace}/{name}/versions", http.HandlerFunc(reg.ProviderVersions))
-	reg.mux.Handle("GET /v1/providers/{namespace}/{name}/{version}/download/{os}/{arch}", http.HandlerFunc(reg.ProviderDownload))
-	reg.mux.Handle("GET /download/provider/{namespace}/{name}/{version}/asset/{assetName}", http.HandlerFunc(reg.ProviderAssetDownload))
+	reg.mux.HandleFunc("/", reg.Index)
+	reg.mux.HandleFunc("/health", reg.Health)
+	reg.mux.HandleFunc("/.well-known/{name}", reg.ServiceDiscovery)
+	reg.mux.HandleFunc("/v1/modules/{namespace}/{name}/{provider}/versions", reg.ModuleVersions)
+	reg.mux.HandleFunc("/v1/modules/{namespace}/{name}/{provider}/{version}/download", reg.ModuleDownload)
+	reg.mux.HandleFunc("/v1/providers/{namespace}/{name}/versions", reg.ProviderVersions)
+	reg.mux.HandleFunc("/v1/providers/{namespace}/{name}/{version}/download/{os}/{arch}", reg.ProviderDownload)
+	reg.mux.HandleFunc("/download/provider/{namespace}/{name}/{version}/asset/{assetName}", reg.ProviderAssetDownload)
 }
