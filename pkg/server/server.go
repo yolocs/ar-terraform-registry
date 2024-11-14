@@ -29,6 +29,8 @@ func New(cfg *Config, ps model.ProviderStore, ms model.ModuleStore, logger *slog
 	reg := &Registry{
 		cfg:    cfg,
 		mux:    http.NewServeMux(),
+		ps:     ps,
+		ms:     ms,
 		logger: logger,
 	}
 	reg.setupRoutes()
@@ -158,8 +160,6 @@ func (reg *Registry) ProviderVersions(w http.ResponseWriter, r *http.Request) {
 		reg.logger.ErrorContext(ctx, "ListProviderVersions", "error", err)
 		return
 	}
-
-	w.WriteHeader(http.StatusOK)
 }
 
 func (reg *Registry) ProviderDownload(w http.ResponseWriter, r *http.Request) {
@@ -184,8 +184,6 @@ func (reg *Registry) ProviderDownload(w http.ResponseWriter, r *http.Request) {
 		reg.logger.ErrorContext(ctx, "GetProviderVersion", "error", err)
 		return
 	}
-
-	w.WriteHeader(http.StatusOK)
 }
 
 func (reg *Registry) ProviderAssetDownload(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +209,6 @@ func (reg *Registry) ProviderAssetDownload(w http.ResponseWriter, r *http.Reques
 	}
 
 	reg.logger.DebugContext(ctx, "ProviderAssetDownload", "written", written)
-	w.WriteHeader(http.StatusOK)
 }
 
 func (reg *Registry) setupRoutes() {

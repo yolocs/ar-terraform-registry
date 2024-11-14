@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 
 	ar "cloud.google.com/go/artifactregistry/apiv1"
@@ -68,7 +69,7 @@ func (a *ArtifactRegistryGeneric) ListProviderVersions(ctx context.Context, name
 			if err != nil {
 				return nil, fmt.Errorf("failed to iterate over versions: %w", err)
 			}
-			rawVersions = append(rawVersions, v.Name)
+			rawVersions = append(rawVersions, path.Base(v.Name))
 		}
 
 		if iter.PageInfo().Token == "" {
@@ -86,6 +87,7 @@ func (a *ArtifactRegistryGeneric) ListProviderVersions(ctx context.Context, name
 }
 
 func (a *ArtifactRegistryGeneric) GetProviderVersion(ctx context.Context, namespace string, name string, version string, os string, arch string) (*model.Provider, error) {
+	logger := logging.FromContext(ctx)
 	req := &arpb.ListFilesRequest{
 		Parent:   fmt.Sprintf("%s/repositories/%s", a.scope(), namespace),
 		Filter:   fmt.Sprintf(`owner="%s/repositories/%s/packages/%s"`, a.scope(), namespace, name),
@@ -106,18 +108,21 @@ func (a *ArtifactRegistryGeneric) GetProviderVersion(ctx context.Context, namesp
 	shaSumName := ""
 	shaSumSigName := ""
 	gpgKeyName := ""
-	namePrefix := fileNamePrefix(name, version)
+	namePrefix := fileNamePrefix(name, fullVersion(version, os, arch), version)
 
 	for _, f := range files {
-		switch f.Name {
+		logger.DebugContext(ctx, "GetProviderVersion found file", "file", f.Name)
+
+		fn := path.Base(f.Name)
+		switch fn {
 		case namePrefix + fmt.Sprintf("_%s_%s.zip", os, arch):
-			providerBinName = f.Name
+			providerBinName = fn
 		case namePrefix + "_SHA256SUMS":
-			shaSumName = f.Name
+			shaSumName = fn
 		case namePrefix + "_SHA256SUMS.sig":
-			shaSumSigName = f.Name
+			shaSumSigName = fn
 		case namePrefix + "_gpg-public-key.pem":
-			gpgKeyName = f.Name
+			gpgKeyName = fn
 		}
 	}
 
@@ -231,8 +236,8 @@ func versionName(version, os, arch string) string {
 	return fmt.Sprintf("%s_%s_%s", version, os, arch)
 }
 
-func fileNamePrefix(pkg, version string) string {
-	return fmt.Sprintf("terraform-provider-%s_%s", pkg, version)
+func fileNamePrefix(pkg, fullVersion, version string) string {
+	return fmt.Sprintf("%s:%s:terraform-provider-%s_%s", pkg, fullVersion, pkg, version)
 }
 
 func mapVersions(rawVersions []string) (*model.ProviderVersions, error) {
@@ -262,8 +267,12 @@ func mapVersions(rawVersions []string) (*model.ProviderVersions, error) {
 	return vs, merr
 }
 
+func fullVersion(version, os, arch string) string {
+	return fmt.Sprintf("%s-%s-%s", version, os, arch)
+}
+
 func parseVersion(version string) (string, string, string, error) {
-	parts := strings.Split(version, "_")
+	parts := strings.Split(version, "-")
 	if len(parts) != 3 {
 		return "", "", "", fmt.Errorf("invalid version format: %s", version)
 	}
