@@ -14,7 +14,10 @@ import (
 )
 
 type Config struct {
-	Port string
+	Port      string
+	Providers model.ProviderStore
+	Modules   model.ModuleStore
+	Logger    *slog.Logger
 }
 
 type Registry struct {
@@ -25,13 +28,13 @@ type Registry struct {
 	logger *slog.Logger
 }
 
-func New(cfg *Config, ps model.ProviderStore, ms model.ModuleStore, logger *slog.Logger) (*Registry, error) {
+func New(cfg *Config) (*Registry, error) {
 	reg := &Registry{
 		cfg:    cfg,
+		ps:     cfg.Providers,
+		ms:     cfg.Modules,
+		logger: cfg.Logger,
 		mux:    http.NewServeMux(),
-		ps:     ps,
-		ms:     ms,
-		logger: logger,
 	}
 	reg.setupRoutes()
 	return reg, nil
@@ -117,28 +120,50 @@ func (reg *Registry) ModuleVersions(w http.ResponseWriter, r *http.Request) {
 	var (
 		namespace = r.PathValue("namespace")
 		name      = r.PathValue("name")
-		provider  = r.PathValue("provider")
+		system    = r.PathValue("system")
 	)
+	ctx := logging.WithLogger(r.Context(), reg.logger)
 
-	response := map[string]interface{}{
-		"modules": []map[string]interface{}{{
-			"versions": []map[string]string{{
-				"version": "1.0.0",
-			}},
-			"namespace": namespace,
-			"name":      name,
-			"provider":  provider,
-		}},
+	versions, err := reg.ms.ListModuleVersions(ctx, namespace, name, system)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "ListModuleVersions", "error", err)
+		return
 	}
-	json.NewEncoder(w).Encode(response)
+
+	resp := ModuleVersionsResponse{
+		Modules: []ModuleVersionsResponseModule{},
+	}
+	for _, v := range versions {
+		resp.Modules[0].Versions = append(resp.Modules[0].Versions, ModuleVersionsResponseModuleVersion{Version: v.Version})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "ModuleVersions", "error", err)
+		return
+	}
 }
 
 func (reg *Registry) ModuleDownload(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Download module: %s/%s/%s/%s",
-		r.PathValue("namespace"),
-		r.PathValue("name"),
-		r.PathValue("provider"),
-		r.PathValue("version"))
+	var (
+		namespace = r.PathValue("namespace")
+		name      = r.PathValue("name")
+		system    = r.PathValue("system")
+		version   = r.PathValue("version")
+	)
+	ctx := logging.WithLogger(r.Context(), reg.logger)
+
+	v, err := reg.ms.GetModuleVersion(ctx, namespace, name, system, version)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		reg.logger.ErrorContext(ctx, "GetModuleVersion", "error", err)
+		return
+	}
+
+	w.Header().Set("X-Terraform-Get", v.SourceURL)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (reg *Registry) ProviderVersions(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +180,7 @@ func (reg *Registry) ProviderVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(vs); err != nil {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		reg.logger.ErrorContext(ctx, "ListProviderVersions", "error", err)
@@ -179,6 +205,7 @@ func (reg *Registry) ProviderDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(provider); err != nil {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		reg.logger.ErrorContext(ctx, "GetProviderVersion", "error", err)
@@ -215,8 +242,9 @@ func (reg *Registry) setupRoutes() {
 	reg.mux.HandleFunc("/", reg.Index)
 	reg.mux.HandleFunc("/health", reg.Health)
 	reg.mux.HandleFunc("/.well-known/{name}", reg.ServiceDiscovery)
-	reg.mux.HandleFunc("/v1/modules/{namespace}/{name}/{provider}/versions", reg.ModuleVersions)
-	reg.mux.HandleFunc("/v1/modules/{namespace}/{name}/{provider}/{version}/download", reg.ModuleDownload)
+	reg.mux.HandleFunc("/v1/modules/{namespace}/{name}/{system}/versions", reg.ModuleVersions)
+	reg.mux.HandleFunc("/v1/modules/{namespace}/{name}/{system}/{version}/download", reg.ModuleDownload)
+	reg.mux.HandleFunc("/download/module/{namespace}/asset/{assetName}", reg.ProviderAssetDownload)
 	reg.mux.HandleFunc("/v1/providers/{namespace}/{name}/versions", reg.ProviderVersions)
 	reg.mux.HandleFunc("/v1/providers/{namespace}/{name}/{version}/download/{os}/{arch}", reg.ProviderDownload)
 	reg.mux.HandleFunc("/download/provider/{namespace}/asset/{assetName}", reg.ProviderAssetDownload)

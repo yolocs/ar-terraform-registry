@@ -1,17 +1,5 @@
 // Package store implements the provider/module store with Artifact Registry
 // Generic repos.
-//
-// Provider mapping to AR concept:
-// - Namespace_name => Package
-// - {V}_{OS}_{Arch} => Version
-// - Provider binary => File under the version
-// - SHASUM => File under the version
-// - SHASUM.sig => File under the version
-//
-// Module mapping to AR concept:
-// - Namespace_name => Package
-// - Version => Version
-// - Module zip => File under the version
 package store
 
 import (
@@ -33,33 +21,36 @@ import (
 )
 
 type Config struct {
-	ProjectID string
-	Location  string
+	ProjectID              string
+	Location               string
+	ArtifactRegistryClient *ar.Client
+	Downloader             *Downloader
 }
 
 type ArtifactRegistryGeneric struct {
 	client     *ar.Client
 	downloader *Downloader
-	cfg        *Config
+	scope      string
 }
 
-func NewArtifactRegistryGeneric(client *ar.Client, downloader *Downloader, cfg *Config) (*ArtifactRegistryGeneric, error) {
+func NewArtifactRegistryGeneric(cfg *Config) (*ArtifactRegistryGeneric, error) {
 	return &ArtifactRegistryGeneric{
-		client:     client,
-		downloader: downloader,
-		cfg:        cfg,
+		client:     cfg.ArtifactRegistryClient,
+		downloader: cfg.Downloader,
+		scope:      fmt.Sprintf("projects/%s/locations/%s", cfg.ProjectID, cfg.Location),
 	}, nil
 }
 
 func (a *ArtifactRegistryGeneric) ListProviderVersions(ctx context.Context, namespace string, name string) (*model.ProviderVersions, error) {
 	logger := logging.FromContext(ctx)
 
+	repo, pkg := namespace, name
 	pageToken := ""
-	var rawVersions []string
+	var fullVersions []string
 
 	for {
 		req := &arpb.ListVersionsRequest{
-			Parent:    fmt.Sprintf("%s/repositories/%s/packages/%s", a.scope(), namespace, name),
+			Parent:    fmt.Sprintf("%s/repositories/%s/packages/%s", a.scope, repo, pkg),
 			PageSize:  1000,
 			PageToken: pageToken,
 		}
@@ -69,7 +60,8 @@ func (a *ArtifactRegistryGeneric) ListProviderVersions(ctx context.Context, name
 			if err != nil {
 				return nil, fmt.Errorf("failed to iterate over versions: %w", err)
 			}
-			rawVersions = append(rawVersions, path.Base(v.Name))
+			logger.DebugContext(ctx, "ListProviderVersions found version", "version", v.Name)
+			fullVersions = append(fullVersions, path.Base(v.Name))
 		}
 
 		if iter.PageInfo().Token == "" {
@@ -78,7 +70,7 @@ func (a *ArtifactRegistryGeneric) ListProviderVersions(ctx context.Context, name
 		pageToken = iter.PageInfo().Token
 	}
 
-	vs, err := mapVersions(rawVersions)
+	vs, err := mapVersions(fullVersions)
 	if err != nil {
 		logger.ErrorContext(ctx, "ListProviderVersions found unrecognized version names", "error", err)
 	}
@@ -88,9 +80,10 @@ func (a *ArtifactRegistryGeneric) ListProviderVersions(ctx context.Context, name
 
 func (a *ArtifactRegistryGeneric) GetProviderVersion(ctx context.Context, namespace string, name string, version string, os string, arch string) (*model.Provider, error) {
 	logger := logging.FromContext(ctx)
+	repo, pkg, fullVer := namespace, name, fullVersion(version, os, arch)
 	req := &arpb.ListFilesRequest{
-		Parent:   fmt.Sprintf("%s/repositories/%s", a.scope(), namespace),
-		Filter:   fmt.Sprintf(`owner="%s/repositories/%s/packages/%s"`, a.scope(), namespace, name),
+		Parent:   fmt.Sprintf("%s/repositories/%s", a.scope, repo),
+		Filter:   fmt.Sprintf(`owner="%s/repositories/%s/packages/%s"`, a.scope, repo, pkg),
 		PageSize: 1000,
 	}
 
@@ -104,16 +97,13 @@ func (a *ArtifactRegistryGeneric) GetProviderVersion(ctx context.Context, namesp
 		files = append(files, f)
 	}
 
-	providerBinName := ""
-	shaSumName := ""
-	shaSumSigName := ""
-	gpgKeyName := ""
-	namePrefix := fileNamePrefix(name, fullVersion(version, os, arch), version)
+	var providerBinName, shaSumName, shaSumSigName, gpgKeyName string
+	namePrefix := providerFileNamePrefix(pkg, fullVer, version)
 
 	for _, f := range files {
 		logger.DebugContext(ctx, "GetProviderVersion found file", "file", f.Name)
-
 		fn := path.Base(f.Name)
+
 		switch fn {
 		case namePrefix + fmt.Sprintf("_%s_%s.zip", os, arch):
 			providerBinName = fn
@@ -127,28 +117,28 @@ func (a *ArtifactRegistryGeneric) GetProviderVersion(ctx context.Context, namesp
 	}
 
 	if providerBinName == "" {
-		return nil, fmt.Errorf("provider binary not found for %s_%s_%s", version, os, arch)
+		return nil, fmt.Errorf("provider binary not found for %q", fullVer)
 	}
 	if shaSumName == "" {
-		return nil, fmt.Errorf("SHA256SUMS not found for %s_%s_%s", version, os, arch)
+		return nil, fmt.Errorf("SHA256SUMS not found for %q", fullVer)
 	}
 	if shaSumSigName == "" {
-		return nil, fmt.Errorf("SHA256SUMS.sig not found for %s_%s_%s", version, os, arch)
+		return nil, fmt.Errorf("SHA256SUMS.sig not found for %q", fullVer)
 	}
 
-	shaSums, err := a.parseSHASumFile(ctx, namespace, shaSumName)
+	shaSums, err := a.parseSHASumFile(ctx, repo, shaSumName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse SHA256SUMS: %w", err)
 	}
 
-	keys, err := a.parseGPGKeys(ctx, namespace, gpgKeyName)
+	keys, err := a.parseGPGKeys(ctx, repo, gpgKeyName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse GPG keys: %w", err)
 	}
 
-	downloadUrl := fmt.Sprintf("/download/provider/%s/asset/%s", namespace, providerBinName)
-	SHASumURL := fmt.Sprintf("/download/provider/%s/asset/%s", namespace, shaSumName)
-	SHASumSigURL := fmt.Sprintf("/download/provider/%s/asset/%s", namespace, shaSumSigName)
+	downloadUrl := fmt.Sprintf("/download/provider/%s/asset/%s", repo, providerBinName)
+	SHASumURL := fmt.Sprintf("/download/provider/%s/asset/%s", repo, shaSumName)
+	SHASumSigURL := fmt.Sprintf("/download/provider/%s/asset/%s", repo, shaSumSigName)
 
 	p := &model.Provider{
 		Protocols:           []string{"5.0"},
@@ -165,8 +155,8 @@ func (a *ArtifactRegistryGeneric) GetProviderVersion(ctx context.Context, namesp
 	return p, nil
 }
 
-func (a *ArtifactRegistryGeneric) GetProviderAsset(ctx context.Context, namespace string, fileName string) (io.ReadCloser, error) {
-	u := fmt.Sprintf("%s/repositories/%s/files/%s:download", a.scope(), namespace, fileName)
+func (a *ArtifactRegistryGeneric) GetProviderAsset(ctx context.Context, repo string, fileName string) (io.ReadCloser, error) {
+	u := fmt.Sprintf("%s/repositories/%s/files/%s:download", a.scope, repo, fileName)
 	r, err := a.downloader.Download(ctx, u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download %s: %w", fileName, err)
@@ -174,8 +164,54 @@ func (a *ArtifactRegistryGeneric) GetProviderAsset(ctx context.Context, namespac
 	return r, nil
 }
 
-func (a *ArtifactRegistryGeneric) parseSHASumFile(ctx context.Context, namespace, fileName string) (map[string]string, error) {
-	u := fmt.Sprintf("%s/repositories/%s/files/%s:download", a.scope(), namespace, fileName)
+func (a *ArtifactRegistryGeneric) ListModuleVersions(ctx context.Context, namespace, name, system string) ([]*model.ModuleVersion, error) {
+	logger := logging.FromContext(ctx)
+
+	repo, pkg := namespace, modulePkg(name, system)
+	pageToken := ""
+	var vs []*model.ModuleVersion
+
+	for {
+		req := &arpb.ListVersionsRequest{
+			Parent:    fmt.Sprintf("%s/repositories/%s/packages/%s", a.scope, repo, pkg),
+			PageSize:  1000,
+			PageToken: pageToken,
+		}
+		iter := a.client.ListVersions(ctx, req)
+
+		for v, err := range iter.All() {
+			if err != nil {
+				return nil, fmt.Errorf("failed to iterate over versions: %w", err)
+			}
+
+			logger.DebugContext(ctx, "ListModuleVersions found version", "version", v.Name)
+
+			version := path.Base(v.Name)
+			vs = append(vs, &model.ModuleVersion{
+				Version:   version,
+				SourceURL: fmt.Sprintf("/download/module/%s/asset/%s", repo, moduleFileName(pkg, version)),
+			})
+		}
+
+		if iter.PageInfo().Token == "" {
+			break
+		}
+		pageToken = iter.PageInfo().Token
+	}
+
+	return vs, nil
+}
+
+func (a *ArtifactRegistryGeneric) GetModuleVersion(ctx context.Context, namespace, name, system, version string) (*model.ModuleVersion, error) {
+	repo, pkg := namespace, modulePkg(name, system)
+	return &model.ModuleVersion{
+		Version:   version,
+		SourceURL: fmt.Sprintf("/download/module/%s/asset/%s", repo, moduleFileName(pkg, version)),
+	}, nil
+}
+
+func (a *ArtifactRegistryGeneric) parseSHASumFile(ctx context.Context, repo, fileName string) (map[string]string, error) {
+	u := fmt.Sprintf("%s/repositories/%s/files/%s:download", a.scope, repo, fileName)
 	r, err := a.downloader.Download(ctx, u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download %s: %w", fileName, err)
@@ -197,7 +233,7 @@ func (a *ArtifactRegistryGeneric) parseSHASumFile(ctx context.Context, namespace
 }
 
 func (a *ArtifactRegistryGeneric) parseGPGKeys(ctx context.Context, namespace, fileName string) ([]model.GpgPublicKeys, error) {
-	u := fmt.Sprintf("%s/repositories/%s/files/%s:download", a.scope(), namespace, fileName)
+	u := fmt.Sprintf("%s/repositories/%s/files/%s:download", a.scope, namespace, fileName)
 	r, err := a.downloader.Download(ctx, u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download %s: %w", fileName, err)
@@ -228,23 +264,19 @@ func (a *ArtifactRegistryGeneric) parseGPGKeys(ctx context.Context, namespace, f
 	}}, nil
 }
 
-func (a *ArtifactRegistryGeneric) scope() string {
-	return fmt.Sprintf("projects/%s/locations/%s", a.cfg.ProjectID, a.cfg.Location)
+func providerFileNamePrefix(pkg, fullVer, version string) string {
+	return fmt.Sprintf("%s:%s:terraform-provider-%s_%s", pkg, fullVer, pkg, version)
 }
 
-func versionName(version, os, arch string) string {
-	return fmt.Sprintf("%s_%s_%s", version, os, arch)
+func moduleFileName(pkg, version string) string {
+	return fmt.Sprintf("%s:%s:module-archive.tar.gz", pkg, version)
 }
 
-func fileNamePrefix(pkg, fullVersion, version string) string {
-	return fmt.Sprintf("%s:%s:terraform-provider-%s_%s", pkg, fullVersion, pkg, version)
-}
-
-func mapVersions(rawVersions []string) (*model.ProviderVersions, error) {
+func mapVersions(fullVersions []string) (*model.ProviderVersions, error) {
 	var merr error
 	m := make(map[string][]model.Platform)
-	for _, v := range rawVersions {
-		version, os, arch, err := parseVersion(v)
+	for _, v := range fullVersions {
+		version, os, arch, err := parseFullVersion(v)
 		if err != nil {
 			merr = errors.Join(merr, err)
 			continue
@@ -271,7 +303,11 @@ func fullVersion(version, os, arch string) string {
 	return fmt.Sprintf("%s-%s-%s", version, os, arch)
 }
 
-func parseVersion(version string) (string, string, string, error) {
+func modulePkg(name, system string) string {
+	return fmt.Sprintf("terraform-%s-%s", system, name)
+}
+
+func parseFullVersion(version string) (string, string, string, error) {
 	parts := strings.Split(version, "-")
 	if len(parts) != 3 {
 		return "", "", "", fmt.Errorf("invalid version format: %s", version)

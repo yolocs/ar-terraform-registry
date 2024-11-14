@@ -54,19 +54,22 @@ func realMain(ctx context.Context) error {
 		return err
 	}
 
-	arStore, err := store.NewArtifactRegistryGeneric(
-		arClient, donwloader,
-		&store.Config{ProjectID: cfg.ProjectID, Location: cfg.Location})
+	arStore, err := store.NewArtifactRegistryGeneric(&store.Config{
+		ProjectID:              cfg.ProjectID,
+		Location:               cfg.Location,
+		ArtifactRegistryClient: arClient,
+		Downloader:             donwloader,
+	})
 	if err != nil {
 		return err
 	}
 
-	svr, err := server.New(
-		&server.Config{Port: cfg.Port},
-		arStore,
-		nil,
-		logger,
-	)
+	svr, err := server.New(&server.Config{
+		Port:      cfg.Port,
+		Providers: arStore,
+		Modules:   arStore,
+		Logger:    logger,
+	})
 	if err != nil {
 		return err
 	}
