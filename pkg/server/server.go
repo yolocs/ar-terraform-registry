@@ -83,6 +83,8 @@ type ServiceDiscoveryResponse struct {
 }
 
 func (reg *Registry) ServiceDiscovery(w http.ResponseWriter, r *http.Request) {
+	reg.logger.DebugContext(r.Context(), "ServiceDiscovery", "headers", r.Header)
+
 	if r.PathValue("name") != "terraform.json" {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
@@ -167,6 +169,8 @@ func (reg *Registry) ModuleDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (reg *Registry) ProviderVersions(w http.ResponseWriter, r *http.Request) {
+	reg.logger.DebugContext(r.Context(), "ProviderVersions", "headers", r.Header)
+
 	var (
 		namespace = r.PathValue("namespace")
 		name      = r.PathValue("name")
@@ -189,6 +193,8 @@ func (reg *Registry) ProviderVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (reg *Registry) ProviderDownload(w http.ResponseWriter, r *http.Request) {
+	reg.logger.DebugContext(r.Context(), "ProviderDownload", "headers", r.Header)
+
 	var (
 		namespace = r.PathValue("namespace")
 		name      = r.PathValue("name")
@@ -214,6 +220,8 @@ func (reg *Registry) ProviderDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (reg *Registry) ProviderAssetDownload(w http.ResponseWriter, r *http.Request) {
+	reg.logger.DebugContext(r.Context(), "ProviderAssetDownload", "headers", r.Header)
+
 	var (
 		namespace = r.PathValue("namespace")
 		assetName = r.PathValue("assetName")

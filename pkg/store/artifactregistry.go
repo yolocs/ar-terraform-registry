@@ -140,15 +140,20 @@ func (a *ArtifactRegistryGeneric) GetProviderVersion(ctx context.Context, namesp
 	SHASumURL := fmt.Sprintf("/download/provider/%s/asset/%s", repo, shaSumName)
 	SHASumSigURL := fmt.Sprintf("/download/provider/%s/asset/%s", repo, shaSumSigName)
 
+	shaSum, fileNameInSHASums, err := findSHA(shaSums, providerBinName)
+	if err != nil {
+		return nil, err
+	}
+
 	p := &model.Provider{
 		Protocols:           []string{"5.0"},
 		OS:                  os,
 		Arch:                arch,
-		Filename:            providerBinName,
+		Filename:            fileNameInSHASums,
 		DownloadURL:         downloadUrl,
 		SHASumsURL:          SHASumURL,
 		SHASumsSignatureURL: SHASumSigURL,
-		SHASum:              shaSums[providerBinName],
+		SHASum:              shaSum,
 		SigningKeys:         model.SigningKeys{GPGPublicKeys: keys},
 	}
 
@@ -262,6 +267,15 @@ func (a *ArtifactRegistryGeneric) parseGPGKeys(ctx context.Context, namespace, f
 		Source:         "",
 		SourceURL:      "",
 	}}, nil
+}
+
+func findSHA(shaSums map[string]string, fileName string) (string, string, error) {
+	for k, v := range shaSums {
+		if strings.HasSuffix(fileName, k) {
+			return v, k, nil
+		}
+	}
+	return "", "", fmt.Errorf("failed to find SHA for %q", fileName)
 }
 
 func providerFileNamePrefix(pkg, fullVer, version string) string {
