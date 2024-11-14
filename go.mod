@@ -6,6 +6,7 @@ require (
 	cloud.google.com/go/artifactregistry v1.16.0
 	github.com/ProtonMail/go-crypto v1.1.2
 	github.com/abcxyz/pkg v1.1.4
+	github.com/sethvargo/go-envconfig v1.1.0
 	golang.org/x/oauth2 v0.23.0
 )
 
