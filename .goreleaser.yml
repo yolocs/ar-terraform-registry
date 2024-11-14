@@ -1,0 +1,103 @@
+before:
+  hooks:
+    - 'go mod tidy'
+
+builds:
+  -
+    id: 'registry'
+    main: './cmd/registry'
+    env:
+      - 'CGO_ENABLED=0'
+      - 'GO111MODULE=on'
+      - 'GOPROXY=https://proxy.golang.org,direct'
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    flags:
+      - '-a'
+      - '-trimpath'
+    ldflags:
+      - '-s'
+      - '-w'
+      - '-X={{ .ModulePath }}/internal/version.Name=ar-terraform-registry'
+      - '-X={{ .ModulePath }}/internal/version.Version={{ .Version }}'
+      - '-X={{ .ModulePath }}/internal/version.Commit={{ .Commit }}'
+      - '-extldflags=-static'
+    goos:
+      - 'darwin'
+      - 'linux'
+      - 'windows'
+    goarch:
+      - 'amd64'
+      - 'arm64'
+    binary: 'ar-terraform-registry'
+
+dockers:
+  -
+    use: 'buildx'
+    goos: 'linux'
+    goarch: 'amd64'
+    image_templates:
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Major }}-amd64'
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Version }}-amd64'
+      - 'ghcr.io/yolocs/ar-terraform-registry:latest-amd64'
+    build_flag_templates:
+      - '--platform=linux/amd64'
+      - '--pull'
+      - '--label=org.opencontainers.image.created={{ .CommitTimestamp }}'
+      - '--label=org.opencontainers.image.description=ar-terraform-registry is Terraform Registry implementation based on GCP Artifact Registry.'
+      - '--label=org.opencontainers.image.licenses=Apache-2.0'
+      - '--label=org.opencontainers.image.name=ar-terraform-registry'
+      - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
+      - '--label=org.opencontainers.image.source={{ .GitURL }}'
+      - '--label=org.opencontainers.image.title=ar-terraform-registry'
+      - '--label=org.opencontainers.image.version={{ .Version }}'
+  -
+    use: 'buildx'
+    goos: 'linux'
+    goarch: 'arm64'
+    image_templates:
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Major }}-arm64'
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Version }}-arm64'
+      - 'ghcr.io/yolocs/ar-terraform-registry:latest-arm64'
+    build_flag_templates:
+      - '--platform=linux/arm64'
+      - '--pull'
+      - '--label=org.opencontainers.image.created={{ .CommitTimestamp }}'
+      - '--label=org.opencontainers.image.description=ar-terraform-registry is a POC tool for collecting Go integration test coverage from remote.'
+      - '--label=org.opencontainers.image.licenses=Apache-2.0'
+      - '--label=org.opencontainers.image.name=ar-terraform-registry'
+      - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
+      - '--label=org.opencontainers.image.source={{ .GitURL }}'
+      - '--label=org.opencontainers.image.title=ar-terraform-registry'
+      - '--label=org.opencontainers.image.version={{ .Version }}'
+
+docker_manifests:
+  -
+    name_template: 'ghcr.io/yolocs/ar-terraform-registry:{{ .Major }}'
+    image_templates:
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Major }}-amd64'
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Major }}-arm64'
+  -
+    name_template: 'ghcr.io/yolocs/ar-terraform-registry:{{ .Version }}'
+    image_templates:
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Version }}-amd64'
+      - 'ghcr.io/yolocs/ar-terraform-registry:{{ .Version }}-arm64'
+  -
+    name_template: 'ghcr.io/yolocs/ar-terraform-registry:latest'
+    image_templates:
+      - 'ghcr.io/yolocs/ar-terraform-registry:latest-amd64'
+      - 'ghcr.io/yolocs/ar-terraform-registry:latest-arm64'
+
+archives:
+  - format: 'tar.gz'
+    name_template: 'ar-terraform-registry_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+
+checksum:
+  name_template: 'ar-terraform-registry_{{ .Version }}_SHA256SUMS'
+  algorithm: 'sha256'
+
+changelog:
+  use: 'github'
+
+release:
+  draft: false
+  mode: 'replace'

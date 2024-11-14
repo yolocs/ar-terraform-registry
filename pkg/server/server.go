@@ -132,7 +132,7 @@ func (reg *Registry) ModuleVersions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := ModuleVersionsResponse{
-		Modules: []ModuleVersionsResponseModule{},
+		Modules: []ModuleVersionsResponseModule{{}},
 	}
 	for _, v := range versions {
 		resp.Modules[0].Versions = append(resp.Modules[0].Versions, ModuleVersionsResponseModuleVersion{Version: v.Version})
