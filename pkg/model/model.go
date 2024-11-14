@@ -75,8 +75,8 @@ type ProviderManifest struct {
 
 // ModuleStore is the store implementation interface for building custom module stores.
 type ModuleStore interface {
-	ListModuleVersions(ctx context.Context, namespace, name, provider string) ([]*ModuleVersion, error)
-	GetModuleVersion(ctx context.Context, namespace, name, provider, version string) (*ModuleVersion, error)
+	ListModuleVersions(ctx context.Context, namespace, name, system string) ([]*ModuleVersion, error)
+	GetModuleVersion(ctx context.Context, namespace, name, system, version string) (*ModuleVersion, error)
 }
 
 // ProviderStore is the store implementation interface for building custom provider stores
